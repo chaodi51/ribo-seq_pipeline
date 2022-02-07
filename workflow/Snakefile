@@ -1,0 +1,94 @@
+# The main entry point of the workflow
+# snakemake --use-conda -c "qsub -l h_vmem={params.mem} -l mem_free={params.mem} -pe smp {threads} -V -cwd -e qsub/{params.jobName}.e -o qsub/{params.jobName}.o" -j -p
+
+shell.prefix("source ~/.bash_profile; ")
+import os
+import pandas as pd
+
+##### load config #####
+configfile: "../config/config_GSE120762_riboseq.yaml"
+
+# data dir
+raw_fq = config['data_dir']['raw_fq']
+trimmed_fq = config['data_dir']['trimmed_fq']
+cleaned_fq = config['data_dir']['cleaned_fq']
+STAR_index = config['index']['STAR_index']
+bowtie_index_ncRNAs = config['index']['bowtie_index_ncRNAs']
+STAR_align = config['data_dir']['STAR_align']
+bw_rpm = config['data_dir']['bw_rpm']
+gtf_file = config['genome']['annotation']
+genome_fa = config['genome']['sequence']
+transcript_fa = config['genome']['transcript_sequence']
+
+# store the raw data under the "/data" folder, and the results in ../results/
+if not os.path.exists(raw_fq):
+    os.makedirs(raw_fq)
+    os.symlink(raw_fq, "raw_fq")
+if not os.path.exists(trimmed_fq):
+    os.makedirs(trimmed_fq)
+    os.symlink(trimmed_fq,"trimmed_fq")
+if not os.path.exists(cleaned_fq):
+    os.makedirs(cleaned_fq)
+    os.symlink(cleaned_fq,"cleaned_fq")
+if not os.path.exists(STAR_align):
+    os.makedirs(STAR_align)
+    os.symlink(STAR_align, "STAR_align")  
+if not os.path.exists("STAR_align_transcriptome"):
+    os.makedirs("STAR_align_transcriptome")
+if not os.path.exists(bw_rpm):
+    os.makedirs(bw_rpm)
+    os.symlink(bw_rpm, "bw_rpm")
+if not os.path.exists('qsub'):
+    os.makedirs('qsub')
+if not os.path.exists("STAR_index"):
+    os.symlink(STAR_index, "STAR_index")    
+
+##### sample sheets #####
+sample_table = pd.read_table(config['samples']).set_index('sample',drop=False)
+sample_table.index.astype('str')   # enforce str in index
+SAMPLES = sample_table['sample'].tolist()
+SRAS = sample_table['sra'].tolist()
+sample_sra_pair = dict(zip(SAMPLES, SRAS)) # make dict to pair sample:sra
+
+
+# single-end sample does not have 'fq2' column in the table 'sample_table.tsv'
+def is_single_end(sample):
+    return pd.isnull(sample_table.loc[sample, "fq2"])
+
+def get_fastq(wildcards):
+    if not is_single_end(**wildcards):
+        return expand("raw_fq/{sample}_{group}.fastq", group=[1, 2], **wildcards)
+    return "raw_fq/{sample}.fastq".format(**wildcards)
+
+##### target rules #####
+rule all:
+    input:
+        # expand("raw_fq/{sample}.fastq", sample=SAMPLES),
+        # expand("trimmed_fq/{sample}_trimmed.fq.gz", sample=SAMPLES),
+        # expand("cleaned_fq/{sample}.cleaned.fq.gz", sample=SAMPLES),
+        # expand(["STAR_align/{sample}.bam", "STAR_align/{sample}.bam.bai"], sample=SAMPLES),
+        # expand("STAR_align/{sample}.Aligned.toTranscriptome.out.bam", sample=SAMPLES),
+        # expand("STAR_align/{sample}.Aligned.toTranscriptome.out.sorted.bam", sample=SAMPLES),
+        # expand("STAR_align/{sample}.Log.final.out", sample=SAMPLES),
+        # "report/mapped_reads.txt",
+        # "report/rpm_factor.txt",
+        # "report/mapped_reads_to_ncRNA.txt",
+        # expand("bw_rpm/{sample}.bw", sample=SAMPLES),
+        # "../results/riboWaltz/RPF_length.pdf",
+        # "../results/RPF.cds_exp.tsv",
+        # expand("../results/ribo_pause/{sample}.pause_sites.tsv", sample=SAMPLES),
+        #"../results/RiboCode_ORFs/RiboCode_ORFs_result.txt"
+        expand("../results/RiboCode/{sample}.txt", sample=SAMPLES),
+        expand("../results/RiboCode/{sample}.orf_count", sample=SAMPLES)
+##### setup report #####
+report: "report/workflow.rst"
+
+##### load rules #####
+include: "rules/download_fastq.smk"
+include: "rules/trim_galore.smk"
+include: "rules/remove_ncRNAs.smk"
+include: "rules/star_map.smk"
+include: "rules/post_stat.smk"
+include: "rules/get_bw.smk"
+include: "rules/riboWaltz.smk"
+include: "rules/RPF_analysis.smk"

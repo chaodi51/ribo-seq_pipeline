@@ -1,0 +1,24 @@
+samples: sample_table.tsv
+tools: 
+    fastq-dump: /home/dic/public/tools/sratoolkit.2.10.8-centos_linux64/bin/fastq-dump
+    trim_galore: /home/dic/public/miniconda3/bin/trim_galore
+    STAR: /home/dic/public/miniconda3/envs/snakemake/bin/STAR
+    samtools: /home/dic/public/miniconda3/bin/samtools
+genome:
+    annotation: /home/dic/public/genomes/UCSC/mm10/mm10.refGene.gtf
+    sequence: /home/dic/public/genomes/UCSC/mm10/mm10.fa 
+    transcript_sequence: /home/dic/public/genomes/UCSC/mm10/refGene_transcript.fa
+data_dir:
+    raw_fq: /home/dic/bailis_lab/data/ribo-seq_pipeline/raw_fq
+    trimmed_fq: /home/dic/bailis_lab/data/ribo-seq_pipeline/trimmed_fq
+    cleaned_fq: /home/dic/bailis_lab/data/ribo-seq_pipeline/cleaned_fq
+    STAR_align: ../results/STAR_align
+    bw_rpm: ../results/bw_rpm
+index:
+    STAR_index: /home/dic/public/genomes/UCSC/mm10/STAR_mm10_index
+    bowtie_index_ncRNAs: /home/dic/public/genomes/Ensembl/mm10/bowtie_index_tRNA_rRNA_snRNA/mm10_tRNA_rRNA_snRNA 
+diffexp:
+    contrasts:
+        treated-vs-untreated:
+        - LPS
+        - NT

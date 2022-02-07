@@ -1,0 +1,32 @@
+---
+title: "Showing the RiboCode active ORF results"
+author: "Chao Di, dic@email.chop.edu"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output:
+  html_document:
+    toc_depth: 1
+    number_sections: true
+---
+
+```{r setup, include=FALSE, echo = FALSE, cache = FALSE}
+# replace with path where you want the results be
+knitr::opts_knit$set(root.dir="/Users/dic/Documents/Will Bailis lab/GSE120762_riboseq")
+```
+# Abstract
+This is to show the active ORF identification results from RiboCode ran on the HPC
+
+```{r include=TRUE,echo=FALSE,message = FALSE, warning=FALSE}
+setwd("/Users/dic/Documents/Will Bailis lab/GSE120762_riboseq/RiboCode/")
+samples <- read.table("../samplelist.txt",header=T)
+for(i in samples$sample){
+  print(i)
+  name = paste0(i, "_collapsed.txt")
+  orf_t <- read.table(name, header=TRUE, sep="\t")
+  # print(head(orf_t))
+}
+# only show the last sample
+cat("active ORF table:\n")
+print(head(orf_t))
+
+
+```

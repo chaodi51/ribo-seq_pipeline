@@ -1,0 +1,118 @@
+---
+title: "transcript_vs_translation_within_KEGG_groups"
+author: "Chao Di, dic@email.chop.edu"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output:
+  html_document:
+    toc_depth: 1
+    number_sections: true
+---
+
+```{r setup, include=FALSE, echo = FALSE, cache = FALSE}
+# replace with path where you want the results be
+knitr::opts_knit$set(root.dir="/Users/dic/Documents/Will Bailis lab/GSE120762_riboseq/KEGG_groups_mouse")
+```
+
+# Abstract {-}
+This is to analyze the correlation/association of transcription and translation for genes within the same KEGG functional groups (modules/pathways)
+
+```{r include=TRUE,echo=FALSE,message = FALSE, warning = FALSE}
+library(dplyr)
+library(tidyr)
+library(tibble)
+library(data.table)
+library(reshape2)
+library(ggplot2)
+library(ggnewscale)
+```
+
+## Prepare tables of KEGG modules/pathways with associated genes {-}
+Results from shell script: link_pathway-module-gene.sh
+The .sh script was complied for retrieving all mouse KEGG modules or pathways and find associated genes with annotations. KEGG API was used in the script. R package `KEGGREST` should be sufficient for the same work.
+
+```{r include=TRUE,echo=FALSE,message = FALSE, warning = FALSE}
+# read module/pathway-gene association tables
+setwd("/Users/dic/Documents/Will Bailis lab/GSE120762_riboseq/KEGG_groups_mouse")
+df_mod_gene <- read.table("mouse_modulesAnno_with_mmuID_genename.txt", header=TRUE, sep="\t", quote="")
+head(df_mod_gene)
+mod_nGenes <- read.table("mouse_modules_nGenes.txt",  header=TRUE, sep="\t") 
+head(mod_nGenes)
+
+df_path_gene <- read.table("mouse_pathwaysAnno_with_mmuID_genename.txt", header=TRUE, sep="\t", quote="")
+head(df_path_gene)
+path_nGenes <- read.table("mouse_pathways_nGenes.txt",  header=TRUE, sep="\t") 
+head(path_nGenes)
+
+```
+
+## Correlation analysis for transcript vs translation {-}
+* Add gene expression (read counts from RNA-seq) and gene translation (read counts from ribo-seq) values
+* Calculate Correlation Coefficients (Pearson or Spearman) within each module
+* Report the r and p values
+
+```{r include=TRUE,echo=FALSE,message = FALSE, warning = FALSE}
+
+setwd("/Users/dic/Documents/Will Bailis lab/GSE120762_riboseq/KEGG_groups_mouse")
+# read RNA-seq expression values (normalized and log2 transformed) from DESeq2
+gene_exp <- read.table("../../GSE120762_rnaseq/gene_exp_normalized_transformed.tsv", header=TRUE, sep="\t")
+
+# read RPF normalized read counts from ribo-seq
+RPF_RPKM <- read.table("../RPF_rpkm_table.tsv", header=TRUE, sep="\t")
+
+# merge the data above
+rna_ribo_exp <- merge(RPF_RPKM, gene_exp, by="GeneID")
+colnames(rna_ribo_exp) = c("GeneID","Length", "WT_ribo1", "LPS_ribo1", "WT_ribo2","LPS_ribo2","WT_RNA1","WT_RNA2","WT_RNA3","LPS_RNA1","LPS_RNA2","LPS_RNA3")
+
+# get mean of the replicates
+rna_ribo_exp_ave <- rna_ribo_exp %>% rowwise %>% dplyr::mutate(WT_ribo = mean(WT_ribo1, WT_ribo2))
+rna_ribo_exp_ave <- rna_ribo_exp_ave %>% rowwise %>% dplyr::mutate(LPS_ribo = mean(LPS_ribo1, LPS_ribo2))
+rna_ribo_exp_ave <- rna_ribo_exp_ave %>% rowwise %>% dplyr::mutate(WT_RNA = mean(WT_RNA1, WT_RNA2, WT_RNA3))
+rna_ribo_exp_ave <- rna_ribo_exp_ave %>% rowwise %>% dplyr::mutate(LPS_RNA = mean(LPS_RNA1, LPS_RNA2, LPS_RNA3))
+rna_ribo_exp_ave <- rna_ribo_exp_ave[,c(1,13:16)]
+colnames(rna_ribo_exp_ave)[1] <- "geneName"
+
+# only do for modules with 3 or more genes (CI can be only calculated when sample size>=4)
+df_mod_gene = df_mod_gene %>% tidyr::separate(geneAnno,c("geneName","geneAnno"), sep="; ")
+df_mod_gene_values = left_join(df_mod_gene, rna_ribo_exp_ave, by="geneName")
+# remove genes with NA values, and after that remove modules with less than 3 genes remained
+df_mod_gene_values_filtered =df_mod_gene_values %>% drop_na() %>% group_by(modID) %>% filter(n() >= 3)
+# add chnanges
+df_mod_gene_values_filtered$Change_ribo=df_mod_gene_values_filtered$LPS_ribo - df_mod_gene_values_filtered$WT_ribo
+df_mod_gene_values_filtered$Change_RNA=df_mod_gene_values_filtered$LPS_RNA - df_mod_gene_values_filtered$WT_RNA
+
+corr_RNA_ribo <- df_mod_gene_values_filtered %>% 
+  group_by(modID, modAnno) %>% 
+  summarise(WT_corr=as.numeric(cor.test(WT_ribo, WT_RNA)$estimate), WT_p=cor.test(WT_ribo, WT_RNA)$p.value, 
+            LPS_corr=as.numeric(cor.test(LPS_ribo, LPS_RNA)$estimate), LPS_p=cor.test(LPS_ribo, LPS_RNA)$p.value, 
+            Change_corr=as.numeric(cor.test(Change_ribo, Change_RNA)$estimate), Change_p=cor.test(Change_ribo, Change_RNA)$p.value,
+            nGenes=n()) %>% 
+  filter(WT_p<=0.05 | LPS_p<=0.05)
+
+```
+
+```{r include=TRUE,echo=FALSE,message = FALSE, warning = FALSE, fig.height=10, fig.width=10}
+# reformat the data table
+mm=melt.data.table(setDT(corr_RNA_ribo[,c(2:6,9)]), id=c("modAnno","nGenes"), measure=patterns("_corr", "_p"), value.name=c("corr","pvalue"))
+mm$variable <- recode(mm$variable, "1"="WT", "2"="LPS")
+
+# visualize the results
+p <- ggplot(mm, aes(reorder(modAnno, corr), corr)) +
+     geom_point(data=mm[mm$variable=="WT"], aes(size=nGenes, color=ifelse(pvalue<=0.05, "p<=0.05", "p>0.05"))) +
+     #scale_color_gradient("WT",low="dodgerblue",high="grey") +
+     scale_color_manual("WT", values=c("p<=0.05"="dodgerblue", "p>0.05"="grey")) +
+     new_scale_color() + 
+     geom_point(data=mm[mm$variable=="LPS"], aes(size=nGenes, color=ifelse(pvalue<=0.05, "p<=0.05", "p>0.05"))) +
+     #scale_color_gradient("LPS", low="red", high="grey") +
+     scale_color_manual("LPS", values=c("p<=0.05"="red", "p>0.05"="grey")) +
+     coord_flip() +
+     labs(x="Module", y="corr", title= "transcription_translation correlation in modules", color="p-value", size="nGenes") + 
+     theme_minimal()
+     #guides(nGenes = guide_legend(order=3))
+print(p)
+
+```
+
+
+
+
+

@@ -1,0 +1,5 @@
+sample	sra	unit	fq1	fq2	strand	condition
+GSM3414919_RibosomeProfiling_Rep1_CHX_NT	SRR7956050	rep1	GSM3414919_RibosomeProfiling_Rep1_CHX_NT.fastq		yes	NT
+GSM3414920_RibosomeProfiling_Rep1_CHX_LPS	SRR7956051	rep1	GSM3414920_RibosomeProfiling_Rep1_CHX_LPS.fastq		yes	LPS
+GSM3414921_RibosomeProfiling_Rep2_CHX_NT	SRR7956052	rep2	GSM3414921_RibosomeProfiling_Rep2_CHX_NT.fastq		yes	NT
+GSM3414922_RibosomeProfiling_Rep2_CHX_LPS	SRR7956053	rep2	GSM3414922_RibosomeProfiling_Rep2_CHX_LPS.fastq		yes	LPS

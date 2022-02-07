@@ -1,0 +1,103 @@
+---
+title: "RPF expression and ribosome pause site"
+author: "Chao Di, dic@email.chop.edu"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output:
+  html_document:
+    toc_depth: 1
+    number_sections: true
+---
+
+```{r setup, include=FALSE, echo = FALSE, cache = FALSE}
+# replace with path where you want the results be
+knitr::opts_knit$set(root.dir="/Users/dic/Documents/Will Bailis lab/GSE120762_riboseq")
+```
+# Abstract
+This script calculates RPF expression on CDS, ribosome pause sites (Pausepred, perl)
+```{r include=FALSE,echo=FALSE,message = FALSE, warning=FALSE}
+#library(reticulate) # specify python3 in r-reiculate for RiboVIEW
+# reticulate::use_condaenv(condaenv="py2", required = TRUE)
+library(Rsubread)
+library(ggplot2)
+library(dplyr)
+library(mgsub)
+# library(RiboVIEW) # use python2
+```
+## Count RPFs (normalized in RPKM) on CDS for each gene, using `featureCounts`
+```{r include=FALSE,echo=FALSE,message = FALSE, warning=FALSE}
+setwd("/Users/dic/Documents/Will Bailis lab/GSE120762_riboseq")
+samples <- read.table("samplelist.txt",header=T)
+bamfiles <- paste0("./STAR_align/", as.vector(samples$sample),".bam")
+RPFcounts <- featureCounts(files=bamfiles, annot.ext="mm10.refGene.gtf",
+    isGTFAnnotationFile=TRUE,GTF.featureType="CDS",GTF.attrType="gene_id")
+head(RPFcounts$counts)
+write.table(RPFcounts$counts, file="RPF_counts.tsv", sep="\t", quote=F, row.names = TRUE, col.names = NA)
+```
+
+```{r include=TRUE,echo=FALSE,message = FALSE, warning=FALSE}
+id_length <- RPFcounts$annotation %>% as.data.frame() %>% dplyr::select(GeneID,Length)
+rownames(id_length) <- id_length$GeneID
+count_table <- merge(id_length, RPFcounts$counts,by="row.names")[,-1]
+mapped_reads <- RPFcounts$stat %>% dplyr::filter(Status=="Assigned")
+# convert counts to RPKM
+values <- mapply('/', count_table %>% summarise(across(starts_with("GSM"), ~./Length*1000*1000000)), mapped_reads[,-1])
+rpkm_table <- cbind(count_table[,c(1,2)], values)
+colnames(rpkm_table) <- mgsub(colnames(rpkm_table), c("RibosomeProfiling_", ".bam"), c("",""))
+
+cat("RPF RPKMs on CDS region:")
+head(rpkm_table)
+```
+
+## ribosome pause sites identification by [Pausepred](https://github.com/romikasaini/Pausepred_offline)
+`CPAN` under default perl, `usr/bin/perl` must be configured and updated, see [here] (https://bioinformaticsonline.com/blog/view/29479/how-to-install-perl-modules-on-mac-os-x-in-easy-steps).
+The running may take a while, for large bams (17min for all four bams, ~1.3G), better run it on Cluster. The bams should be sorted. I modified the perl script to specifiy outfile on command line.
+Load and show the results:
+
+```{r include=TRUE,echo=FALSE,message = FALSE, warning=FALSE}
+samples$sample <- gsub("RibosomeProfiling_","",samples$sample)
+for(i in samples$sample){
+  print(i)
+  name = paste0("pause_sites_", i, ".txt")
+  pause_t <- read.table(name, header=TRUE, sep=",", skip = 1)
+  print(head(pause_t))
+}
+
+```
+
+<!-- ```{bash, engine.opts='-l', include=TRUE,echo=FALSE,message = FALSE, warning=FALSE} -->
+
+<!-- /usr/bin/perl /Users/dic/apps/Pausepred_offline/offline_pausepred.pl STAR_align_transcriptome/GSM3414919_Rep1_CHX_NT.bam 1000 20 ./refGene_transcript.fa  28,29,30 10 50 50 0,0,0 pause_sites_GSM3414919_Rep1_CHX_NT.txt -->
+
+<!-- /usr/bin/perl /Users/dic/apps/Pausepred_offline/offline_pausepred.pl STAR_align_transcriptome/GSM3414920_Rep1_CHX_LPS.bam 1000 20 ./refGene_transcript.fa  28,29,30 10 50 50 0,0,0 pause_sites_GSM3414920_Rep1_CHX_LPS.txt -->
+
+<!-- /usr/bin/perl /Users/dic/apps/Pausepred_offline/offline_pausepred.pl STAR_align_transcriptome/GSM3414921_Rep2_CHX_NT.bam 1000 20 ./refGene_transcript.fa  28,29,30 10 50 50 0,0,0 pause_sites_GSM3414921_Rep2_CHX_NT.txt -->
+
+<!-- /usr/bin/perl /Users/dic/apps/Pausepred_offline/offline_pausepred.pl STAR_align_transcriptome/GSM3414922_Rep2_CHX_LPS.bam 1000 20 ./refGene_transcript.fa  28,29,30 10 50 50 0,0,0 pause_sites_GSM3414922_Rep2_CHX_LPS.txt -->
+<!-- ``` -->
+
+
+<!-- # ```{r include=TRUE,echo=FALSE,message = FALSE, warning=FALSE} -->
+<!-- ## Codon enrichment by RiboVIEW -->
+<!-- # list.bam <- paste0("./STAR_align_transcriptome/", as.vector(sub("RibosomeProfiling_","",samples$sample)),".bam") -->
+<!-- # refFASTA="./refGene_transcript.fa" -->
+<!-- # refGTF="./mm10.refGene.gtf" -->
+<!-- # refCDS <- tempfile() -->
+<!-- # # modified the python script by adding "if 'CDS' in gtfDic[transcriptID]:" in line166 -->
+<!-- # gtf2table(refGTF, outfile = refCDS)  -->
+<!-- # cdsAnno <- read.table(refCDS,header=T) -->
+<!-- # head(cdsAnno) -->
+<!-- #  -->
+<!-- # ## use the default load of python at /usr/bin/python, install pysam and biopython first -->
+<!-- # XP.conditions <- c("NT","LPS","NT","LPS") -->
+<!-- # XP.conditions.i <- c(1,2,1,2) -->
+<!-- # XP.names <- as.vector(samples$sample) -->
+<!-- # pathout <- "./RiboVIEW/periodicity" -->
+<!-- # # periodicity(list.bam, refCDS, refFASTA, pathout, XP.names, versionStrip = FALSE) -->
+<!-- #  -->
+<!-- # # this does not work since rPython is not supported in new R versions. -->
+<!-- # pathout <- "./RiboVIEW/condon_enrichment" -->
+<!-- # enrichmentNoccupancy(list.bam, refCDS, refFASTA, mini=25, maxi=32, XP.names, pathout, versionStrip = FALSE) -->
+<!-- # ``` -->
+
+
+

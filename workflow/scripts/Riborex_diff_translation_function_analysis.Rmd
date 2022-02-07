@@ -1,0 +1,201 @@
+---
+title: "Differential translation and functional analysis"
+author: "Chao Di, dic@email.chop.edu"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output:
+  html_document:
+    toc_depth: 1
+    number_sections: true
+---
+
+```{r setup, include=FALSE, echo = FALSE, cache = FALSE}
+# replace with path where you want the results be
+knitr::opts_knit$set(root.dir="/Users/dic/Documents/Will Bailis lab/GSE120762_riboseq")
+```
+
+# Abstract
+Riborex is a R package for identifying differentially translated genes from Ribo-seq data. Riborex integrates both RNA- and Ribo-seq read count data into a single generalized linear model (GLM) and generates a modified design matrix reflecting the integration. At its core, Riborex applies existing RNA-seq analysis tools such as edgeR, DESeq2 and Voom to this modified design matrix and identifies differential translation across conditions. 
+Functional analysis is be done by GO, KEGG and GSEA
+
+```{r include=TRUE,echo=FALSE,message = FALSE, warning = FALSE}
+setwd("/Users/dic/Documents/Will Bailis lab/GSE120762_riboseq")
+library(riborex)
+library(dplyr)
+library(EnhancedVolcano)
+library(fgsea)
+library(gprofiler2)
+library(tibble)
+# library(clusterProfiler)
+```
+## Do differential by `riborex`
+The input for Riborex are two read count tables summarized from RNA-seq and Ribo-seq data respectively. The read count table should be organized as a data frame with rows correspond to genes and columns correspond to samples as shown below. Then we need to prepare two vectors to indicate the treatments of samples in RNA- and Ribo-seq data. Both RNA-seq and Ribo-seq can have different number of samples in control and treated condtions, and RNA-seq and Ribo-seq data can have different number of samples.  
+The translation efficiency was calculated as the ratio between CDS RPF abundance and mRNA abundance for each gene, By default, DESeq2 is used as the engine if you don't specify the engine option.
+
+```{r include=TRUE,echo=FALSE,message = FALSE, warning = FALSE}
+RNACntTable <- read.table("../GSE120762_rnaseq/all_readCount.tsv", header=TRUE, sep="\t")
+rownames(RNACntTable) <- RNACntTable$gene
+RNACntTable <- RNACntTable[,c(2:7)]
+
+RiboCntTable <- read.table("RPF_counts.tsv", header=TRUE, sep="\t")
+rownames(RiboCntTable) <- RiboCntTable$X
+RiboCntTable <- RiboCntTable[,c(2,4,3,5)][order(rownames(RiboCntTable)),]
+RNACntTable <- RNACntTable[rownames(RNACntTable) %in% rownames(RiboCntTable),]
+RNACntTable <- RNACntTable[order(rownames(RNACntTable)),]
+head(RNACntTable)
+head(RiboCntTable)
+# specify conditions for each sample
+rnaCond <- c("WT", "WT", "WT", "LPS", "LPS", "LPS")
+riboCond <- c("WT", "WT", "LPS", "LPS")
+
+# by default, DESeq2 is used as the engine if you don't specify the engine option. 
+res <- riborex(RNACntTable, RiboCntTable, rnaCond, riboCond, "DESeq2")
+res
+#hist(res$pvalue, main = 'DESeq2 unadjusted p-values', xlab='Unadjusted p-values')
+write.table(res, "riborex_res_deseq2.txt", quote=FALSE)
+# report # up/down genes
+up_gene = res[which(res$padj<=0.05 & res$log2FoldChange>=1),]
+down_gene = res[which(res$padj<=0.05 & res$log2FoldChange <= -1),]
+cat(paste0("padj<=0.05 & log2FoldChange>=1: # Up = ", length(up_gene$padj),"  # Down = ", length(down_gene$padj),"\n"))
+
+```
+
+##  Vocano-plot to mark the diffrentially translated genes
+
+```{r, include=TRUE,fig.height=8, fig.width=7,echo=FALSE,message = FALSE, warning = FALSE}
+# volcano plot using EnhancedValcano
+# select the most significantly DE genes
+DEGs = res[which(res$padj<=0.05 & (res$log2FoldChange>=1 | res$log2FoldChange <= -1)),]
+
+#pdf("volcano-plot.pdf",12,12)
+p <- EnhancedVolcano(res,
+                lab = rownames(res),
+                # selectLab = head(DEGs$Gene,500),
+                labSize = 5,
+                x = 'log2FoldChange',
+                y = 'padj',
+                title="LPS vs WT",
+                subtitle = "",
+                pCutoff = 1e-3,
+                FCcutoff = 1,
+                pointSize = 3
+                # drawConnectors = TRUE,
+                # widthConnectors = 0.5,
+                # typeConnectors = 'open',
+                # colConnectors = 'grey'
+                ) + theme(plot.title = element_text(hjust = 0.5)) 
+print(p)
+#dev.off()
+```
+
+# Functional analysis for the differential translated genes
+
+## Functional enrichment analysis by `gprofilter2` or `clusterProfiler`
+The abbreviation of the datasource for the term. Currently, the possible datasources are
+GO:MF - Gene Ontology Molecular Function branch  
+GO:BP - Gene Ontology Biological Process branch  
+GO:CC - Gene Ontology Cellular Component branch  
+KEGG - KEGG pathways  
+REAC - Reactome pathways  
+WP - WikiPathways  
+TF - Transfac transcription factor binding site predictions  
+MIRNA - mirTarBase miRNA targets  
+HPA - Human Protein Atlas expression data  
+CORUM - Manually annotated protein complexes from mammalian organisms.  
+HP - Human Phenotype Ontology, a standardized vocabulary of phenotypic abnormalities encountered in human disease.  
+
+```{r include=TRUE, echo=FALSE, message=FALSE, warning = FALSE, fig.height=12, fig.width=10}
+
+gostres <- gost(query = list("DEGs"=rownames(DEGs)),
+                organism = "mmusculus", ordered_query = FALSE,
+                multi_query = FALSE, significant = TRUE, exclude_iea = FALSE,
+                measure_underrepresentation = FALSE, evcodes = FALSE,
+                user_threshold = 0.05, correction_method = "g_SCS",
+                domain_scope = "annotated", custom_bg = NULL,
+                numeric_ns = "", sources = NULL, as_short_link = FALSE)
+
+gostres_select <- gostres$result[,c("source", "term_name", "term_size", "intersection_size","p_value")]
+write.table(gostres_select, file="GOres_fulltable.tsv", sep="\t", row.names = FALSE, col.names=TRUE, quote=FALSE)
+# cat("This is an interactive Manhattan-like-plot:\n")
+# gostplot(gostres, capped = TRUE, interactive = TRUE)
+
+cat("Select most significant terms shown in the table:")
+p <- gostplot(gostres, capped = TRUE, interactive = FALSE)
+pp <- publish_gostplot(p, highlight_terms = gostres$result[gostres$result$p_value<1e-8,]$term_id, 
+                        height = 12, width = 10, filename = NULL)
+
+## save the full table
+# gotable <- publish_gosttable(gostres, highlight_terms = gostres$result[gostres$result$p_value<1e-8,]$term_id,
+#                       use_colors = TRUE, show_columns = c("source", "term_name", "term_size", "intersection_size"), filename = "GOres_table.pdf")
+
+
+# return a short-link with the setting parameters to be analyzed on the web tool g:Profilter
+gostres_link <- gost(query = rownames(DEGs), 
+                organism = "mmusculus", ordered_query = FALSE, 
+                multi_query = FALSE, significant = TRUE, exclude_iea = FALSE, 
+                measure_underrepresentation = FALSE, evcodes = FALSE, 
+                user_threshold = 0.05, correction_method = "g_SCS", 
+                domain_scope = "annotated", custom_bg = NULL, 
+                numeric_ns = "", sources = NULL, as_short_link = TRUE)
+cat("Analyze the data with settings on g:Profilter:", gostres_link, "\n")
+```
+
+## Gene set enrichment analyis by `fgsea`
+
+```{r include=FALSE, echo=FALSE, message=FALSE, warning = FALSE}
+# create a function for GSEA and plot
+gseafunc <- function(gmtfile, pval_cutoff, fig_title){
+    # print(sub("EXTRA1 ","",strsplit(attr(res,"elementMetadata")$description[2],": ")[[1]][2]))
+    res <- res[order(res$stat, decreasing = T),]
+    res$symbol = rownames(res)
+    ranked_genes <- res %>% as.data.frame() %>% dplyr::select(symbol, stat) %>% deframe() 
+    fgseaRes <- fgsea(pathways = gmtfile, 
+                      stats = ranked_genes,
+                      minSize=3,
+                      maxSize=600,
+                      eps = 0)
+    
+    # select most significant pathways to show in a table plot
+    # topPathwaysUp <- fgseaRes[ES > 0][head(order(pval), n=10), pathway]
+    # topPathwaysDown <- fgseaRes[ES < 0][head(order(pval), n=10), pathway]
+    # topPathways <- c(topPathwaysUp, rev(topPathwaysDown))
+    # plotGseaTable(gmtfile[topPathways], ranked_genes, fgseaRes, gseaParam = 0.5)
+    
+    # select independent pathways
+    # collapsedPathways <- collapsePathways(fgseaRes[order(pval)][padj < 0.05], gmtfile, ranked_genes)
+    # mainPathways <- fgseaRes[pathway %in% collapsedPathways$mainPathways][order(-NES), pathway]
+    # plotGseaTable(gmtfile[mainPathways], ranked_genes, fgseaRes, gseaParam = 0.5)
+    
+    
+    # only show pathways with padj<0.25, the minimum default
+    enriched_pathways <- as.data.frame(fgseaRes[fgseaRes$padj < pval_cutoff,])
+    cat("Number of pathways enriched: ")
+    cat(dim(enriched_pathways)[1])
+    p <- ggplot(enriched_pathways, aes(reorder(pathway, NES), NES, color=padj)) +
+         geom_point(aes(size=size)) +
+         scale_color_gradient(low="red", high="blue") +
+         #scale_fill_manual(values = c("Down-regulated" = "dodgerblue","Up-regulated" = "firebrick") ) +
+         coord_flip() +
+         labs(x="Pathway", y="Normalized Enrichment Score", title= fig_title, color="adjust.p", size="Count") + 
+         theme_minimal()
+    print(p)
+}
+```
+
+Test on various of gene sets:  
+
+```{r include=TRUE, echo=FALSE, message=FALSE, warning = FALSE, fig.height=10, fig.width=10, fig.show="hold"}
+
+# load genesets in .gmt format, may need set.seed() if repeat good results
+cat("Hallmarks:\n")
+gmtfile = fgsea::gmtPathways("./geneSets/h.all.v7.2.symbols.gmt")
+gseafunc(gmtfile=gmtfile, pval_cutoff=0.25, "GSEA-Hallmarks")
+
+cat("Ontology: no enrichment for padj<0.8 \n")
+gmtfile = fgsea::gmtPathways("./geneSets/c5.all.v7.2.symbols.gmt")
+gseafunc(gmtfile=gmtfile, pval_cutoff=0.9, "GSEA-Ontology") ## no enrichment for padj<0.8
+
+cat("All gene sets: no enrichment for padj<0.4 \n")
+gmtfile = fgsea::gmtPathways("./geneSets/msigdb.v7.2.symbols.gmt")
+gseafunc(gmtfile=gmtfile, pval_cutoff=0.5, "GSEA-All gene sets") ## no enrichment for padj<0.4
+```
+
